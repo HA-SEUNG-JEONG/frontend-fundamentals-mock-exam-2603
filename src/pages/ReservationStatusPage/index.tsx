@@ -66,8 +66,8 @@ export function ReservationStatusPage() {
     try {
       await cancelMutation.mutateAsync(id);
       setMessage({ type: 'success', text: '예약이 취소되었습니다.' });
-    } catch {
-      setMessage({ type: 'error', text: '취소에 실패했습니다.' });
+    } catch (err: unknown) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : '취소에 실패했습니다.' });
     }
   };
 

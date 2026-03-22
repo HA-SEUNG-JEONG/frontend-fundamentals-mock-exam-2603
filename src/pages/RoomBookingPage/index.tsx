@@ -4,25 +4,15 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Top, Spacing, Border, Button, Text, Select, ListRow } from '_tosslib/components';
 import { colors } from '_tosslib/constants/colors';
+import type { Equipment } from '_tosslib/server/types';
 import { getRooms, getReservations, createReservation } from 'pages/remotes';
-import axios from 'axios';
 import { formatDate } from 'utils/formatDate';
+import { getAvailableRooms } from 'utils/availableRooms';
+import { END_TIME_OPTIONS, isValidTimeRange, START_TIME_OPTIONS } from 'utils/timeSlots';
+import { ALL_EQUIPMENT, EQUIPMENT_LABELS } from '../../constants';
 
-const EQUIPMENT_LABELS: Record<string, string> = {
-  tv: 'TV',
-  whiteboard: '화이트보드',
-  video: '화상장비',
-  speaker: '스피커',
-};
-
-const ALL_EQUIPMENT = ['tv', 'whiteboard', 'video', 'speaker'];
-
-const TIME_SLOTS: string[] = [];
-for (let h = 9; h <= 20; h++) {
-  TIME_SLOTS.push(`${String(h).padStart(2, '0')}:00`);
-  if (h < 20) {
-    TIME_SLOTS.push(`${String(h).padStart(2, '0')}:30`);
-  }
+function isEquipment(value: string): value is Equipment {
+  return (ALL_EQUIPMENT as string[]).includes(value);
 }
 
 export function RoomBookingPage() {
@@ -34,8 +24,8 @@ export function RoomBookingPage() {
   const [startTime, setStartTime] = useState(searchParams.get('startTime') || '');
   const [endTime, setEndTime] = useState(searchParams.get('endTime') || '');
   const [attendees, setAttendees] = useState(Number(searchParams.get('attendees')) || 1);
-  const [equipment, setEquipment] = useState<string[]>(
-    searchParams.get('equipment') ? searchParams.get('equipment')!.split(',').filter(Boolean) : []
+  const [equipment, setEquipment] = useState<Equipment[]>(
+    searchParams.get('equipment') ? searchParams.get('equipment')!.split(',').filter(isEquipment) : []
   );
   const [preferredFloor, setPreferredFloor] = useState<number | null>(
     searchParams.get('floor') ? Number(searchParams.get('floor')) : null
@@ -61,7 +51,7 @@ export function RoomBookingPage() {
   });
 
   const createMutation = useMutation(
-    (data: { roomId: string; date: string; start: string; end: string; attendees: number; equipment: string[] }) =>
+    (data: { roomId: string; date: string; start: string; end: string; attendees: number; equipment: Equipment[] }) =>
       createReservation(data),
     {
       onSuccess: (_data, variables) => {
@@ -81,7 +71,7 @@ export function RoomBookingPage() {
   let validationError: string | null = null;
   const hasTimeInputs = startTime !== '' && endTime !== '';
   if (hasTimeInputs) {
-    if (endTime <= startTime) {
+    if (!isValidTimeRange(startTime, endTime)) {
       validationError = '종료 시간은 시작 시간보다 늦어야 합니다.';
     } else if (attendees < 1) {
       validationError = '참석 인원은 1명 이상이어야 합니다.';
@@ -90,25 +80,17 @@ export function RoomBookingPage() {
   const isFilterComplete = hasTimeInputs && !validationError;
 
   // 필터링
-  const floors = [...new Set(rooms.map((r: { floor: number }) => r.floor))].sort((a: number, b: number) => a - b);
+  const floors = [...new Set(rooms.map(room => room.floor))].sort((a, b) => a - b);
 
   const availableRooms = isFilterComplete
-    ? rooms
-        .filter((room: { id: string; capacity: number; equipment: string[]; floor: number }) => {
-          if (room.capacity < attendees) return false;
-          if (!equipment.every(eq => room.equipment.includes(eq))) return false;
-          if (preferredFloor !== null && room.floor !== preferredFloor) return false;
-          const hasConflict = reservations.some(
-            (r: { roomId: string; date: string; start: string; end: string }) =>
-              r.roomId === room.id && r.date === date && r.start < endTime && r.end > startTime
-          );
-          if (hasConflict) return false;
-          return true;
-        })
-        .sort((a: { floor: number; name: string }, b: { floor: number; name: string }) => {
-          if (a.floor !== b.floor) return a.floor - b.floor;
-          return a.name.localeCompare(b.name);
-        })
+    ? getAvailableRooms(rooms, reservations, {
+        date,
+        startTime,
+        endTime,
+        attendees,
+        equipment,
+        preferredFloor,
+      })
     : [];
 
   const handleBook = async () => {
@@ -136,16 +118,10 @@ export function RoomBookingPage() {
         return;
       }
 
-      const errResult = result as { message?: string };
-      setErrorMessage(errResult.message ?? '예약에 실패했습니다.');
+      setErrorMessage(result.message ?? '예약에 실패했습니다.');
       setSelectedRoomId(null);
     } catch (err: unknown) {
-      let serverMessage = '예약에 실패했습니다.';
-      if (axios.isAxiosError(err)) {
-        const data = err.response?.data as { message?: string } | undefined;
-        serverMessage = data?.message ?? serverMessage;
-      }
-      setErrorMessage(serverMessage);
+      setErrorMessage(err instanceof Error ? err.message : '예약에 실패했습니다.');
       setSelectedRoomId(null);
     }
   };
@@ -296,7 +272,7 @@ export function RoomBookingPage() {
               aria-label="시작 시간"
             >
               <option value="">선택</option>
-              {TIME_SLOTS.slice(0, -1).map(t => (
+              {START_TIME_OPTIONS.map(t => (
                 <option key={t} value={t}>
                   {t}
                 </option>
@@ -323,7 +299,7 @@ export function RoomBookingPage() {
               aria-label="종료 시간"
             >
               <option value="">선택</option>
-              {TIME_SLOTS.slice(1).map(t => (
+              {END_TIME_OPTIONS.map(t => (
                 <option key={t} value={t}>
                   {t}
                 </option>
